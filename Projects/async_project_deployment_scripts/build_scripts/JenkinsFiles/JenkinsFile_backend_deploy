@@ -1,0 +1,135 @@
+    pipeline {
+    agent { label 'node-name' }
+
+    parameters {
+        choice(name: 'Env_to_update_to', 
+               choices: ['Non-Prod',
+                         'Prod',
+                         'dev'],
+               description: 'Please select the environment where the code needs to be deployed.')
+
+        text(name: 'Code_Branch_Name', defaultValue: 'qa', description: 'Branch name of code repositories')
+        text(name: 'Deploy_Script_Branch_Name', defaultValue: 'master', description: 'Branch name of deployment scripts repository, Keep master if not familiar')
+    }
+      environment {
+        code_branch_name = "${params.Code_Branch_Name}"
+        deploy_script_branch_name = "${params.Deploy_Script_Branch_Name}"
+		SS_Auth_Non_Prod = credentials('NONPROD_DEPLOY')
+		SS_Auth_Prod = credentials('PROD_DEPLOY')
+    }
+
+    stages {
+        stage('Git clone and build') {
+            steps {
+                deleteDir()
+                dir('ProjectName_deployment_scripts') {
+                    git branch: "${deploy_script_branch_name}", credentialsId: '85-3268-4220-bdae-1', url: '<repo1>'
+                }
+                dir('deployment_dir/ProjectName-job-publisher') {
+                    git branch: "${code_branch_name}", credentialsId: '85-3268-4220-bdae-1', url: '<repo2>'
+                }
+                dir('deployment_dir/ProjectName-service') {
+                    git branch: "${code_branch_name}", credentialsId: '85-3268-4220-bdae-1', url: '<repo3>'
+                }
+                dir('deployment_dir/ProjectName-polling-service') {
+                    git branch: "${code_branch_name}", credentialsId: '85-3268-4220-bdae-1', url: '<repo4>'
+                }
+                dir('deployment_dir/ProjectName-status-polling-service') {
+                    git branch: "${code_branch_name}", credentialsId: '85-3268-4220-bdae-1', url: '<repo5>'
+                }
+                dir('creds_pull_api') {
+                    git branch: "master", credentialsId: '85-3268-4220-bdae-1', url: '<repo6>'
+                }
+                dir('flyway-installation') {
+                    git url: '<repo7>', branch: 'master'
+                }
+            }
+        }
+
+        stage('Infrastructure Deployment') {
+            steps {
+                sh '''
+                    env_name=${Env_to_update_to}
+                    stackname="ProjectName-$env_name"
+                    region="us-east-1"
+
+                    cp ProjectName_deployment_scripts/build_scripts/CloudformationScripts/sam-ProjectName.yaml deployment_dir/
+                    cp ProjectName_deployment_scripts/build_scripts/properties/$env_name/application.properties deployment_dir/
+                              
+                    if [ "$env_name" == "Non-Prod" ] || [ "$env_name" == "dev" ]
+                    then
+                        s3bucket="devops"
+                        mv ProjectName_deployment_scripts/build_scripts/assume-role-nonprod.sh .
+                        chmod +x assume-role-nonprod.sh
+                        ./assume-role-nonprod.sh
+                        source ./tmp_credential_file
+                    elif [ "$env_name" == "Prod" ]
+                    then
+                        s3bucket="devops-prod"
+                        mv ProjectName_deployment_scripts/build_scripts/assume-role-prod.sh .
+                        chmod +x assume-role-prod.sh
+                        ./assume-role-prod.sh
+                        source ./tmp_credential_file
+                    else
+                    echo "No Role to assume please check environment selection"
+                    fi
+
+                    chmod -R 777 deployment_dir
+                    cd deployment_dir
+                   
+                    aws cloudformation package \
+                    --template-file sam-ProjectName.yaml \
+                    --output-template-file output-sam.yaml \
+                    --s3-bucket $s3bucket
+                    
+                    aws cloudformation deploy \
+                    --region $region \
+                    --template-file output-sam.yaml \
+                    --stack-name $stackname \
+                    --capabilities CAPABILITY_IAM \
+                    --parameter-overrides $(cat application.properties)
+                '''
+            }
+        }
+        stage('Database Queries Deployment') {
+            agent { 
+                label 'redhat_linux' 
+            }
+            steps {
+                dir('ProjectName_deployment_scripts') {
+                    git branch: '${deploy_script_branch_name}', credentialsId: '8-328-4220-bde-1', url: '<repo-url>'
+                }
+               dir('flyway') {
+                    git url: '<repo-url>', branch: 'master'
+                }
+               dir('creds-pull-api') {
+                    git branch: "master", credentialsId: '8-328-4220-bde-1', url: '<repo-url>'
+                }
+               dir('deployment_dir/ProjectName-service') {
+                    git branch: "${code_branch_name}", credentialsId: '8-328-4220-bde-1', url: '<repo-url>'
+                }
+                sh '''
+                    env_name=${Env_to_update_to}
+					if [ "$env_name" == "Non-Prod" ] || [ "$env_name" == "dev" ]
+                    then
+                        export SS_Auth_Token="${SS_Auth_Non_Prod_PSW}"
+                    elif [ "$env_name" == "Prod" ]
+                    then
+                        export SS_Auth_Token="${SS_Auth_Prod_PSW}"
+                    else
+                    echo "Check with environment variable for SS_Auth_Token"
+					exit 1
+                    fi
+                    echo ${SS_Auth_Token}
+                    cd ${WORKSPACE}
+                    python3 ./creds-pull-api/pwd_from_ss.py < ./ProjectName_deployment_scripts/build_scripts/properties/$env_name/flyway.conf > ./flyway/conf/flyway.conf
+                    cat ./flyway/conf/flyway.conf
+                    sed -i "s/^flyway.locations=filesystem:sql/flyway.locations=filesystem:.\\/deployment_dir\\/ProjectName-service\\/database\\/migrations/" ./flyway/conf/flyway.conf
+                    cat ./flyway/conf/flyway.conf
+                    cp -rf ./deployment_dir/ProjectName-service/database/migrations/*.sql ./flyway/sql
+                    ./flyway/flyway migrate
+                '''
+            }
+        }
+    }
+}

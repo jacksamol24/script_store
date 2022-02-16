@@ -1,0 +1,79 @@
+Parameters:
+  VarCLWatchScheduleCron: 
+    Type: String
+    Default: "02 08 * * ? *"
+  VarCLWatchState: 
+    Type: String
+    Default: DISABLED
+  VarCLWatchRoleArn: 
+    Type: String
+    Default: arn:aws:iam::<aws-account-id>:role/service-role/AWS_Events_Invoke_Batch_Job_Queue
+  VarCLWatchDescription:
+    Type: String
+    Default: "everyday 08.02 am GMT"
+  VarJobQueue:
+    Type: String
+    Default: arn:aws:batch:us-west-2:<aws-account-id>:job-queue/Linux_M4_Queue
+  VarJobDefinitionName: 
+    Type: String
+    Default: Job_definition_name_JobDef
+  VarVCPU: 
+    Type: String
+    Default: 2
+  VarMEMORY: 
+    Type: String
+    Default: 2048
+  VarAttemptDurationSeconds:
+    Type: String
+    Default: 172800
+  VarImage: 
+    Type: String
+    Default: <aws-account-id>.dkr.ecr.us-west-2.amazonaws.com/<docker_image_name>:latest
+  VarCommandString:
+    Type: "CommaDelimitedList"
+    Description: List of Command attributes as c.s.v.
+    Default: /entry_point.sh,<project_name>,<s3_bucket_and_folder_name>
+  VarJobRoleArn: 
+    Type: String
+    Default: arn:aws:iam::<aws-account-id>:role/ecs_task_role
+  VarEnvDatabaseName: 
+    Type: String
+    Default: database_name
+
+Resources:
+  JobDefAdvisorUpdateAllDealStatus:
+    Type: AWS::Batch::JobDefinition
+    Properties: 
+      JobDefinitionName: !Ref VarJobDefinitionName
+      ContainerProperties: 
+        Command: !Ref VarCommandString
+        Environment: 
+          - Name: "DATABASE_NAME"
+            Value: !Ref VarEnvDatabaseName
+        Image: !Ref VarImage
+        JobRoleArn: !Ref VarJobRoleArn
+        ResourceRequirements:
+          - Type: VCPU
+            Value: !Ref VarVCPU
+          - Type: MEMORY
+            Value: !Ref VarMEMORY
+      RetryStrategy: 
+        Attempts: 1
+      Timeout: 
+        AttemptDurationSeconds: !Ref VarAttemptDurationSeconds
+      Type: "container"
+  
+  CLWatchRuleAdvisorUpdateAllDealStatus:
+    Type: AWS::Events::Rule
+    Properties: 
+      Description: !Ref VarCLWatchDescription
+      Name: !Sub "${VarJobDefinitionName}_schedule"
+      ScheduleExpression: !Sub "cron(${VarCLWatchScheduleCron})"
+      State: !Ref VarCLWatchState
+      Targets: 
+        - Id: !Sub "${VarJobDefinitionName}_schedule"
+          Arn: !Ref VarJobQueue
+          BatchParameters: 
+            JobDefinition: !Ref JobDefAdvisorUpdateAllDealStatus
+            JobName: !Sub "${VarJobDefinitionName}_schedule"
+          RoleArn: !Ref VarCLWatchRoleArn

@@ -1,0 +1,20 @@
+{
+  "Role": "arn:aws:iam::123456789:role/S3_replicator",
+  "Rules": [
+      {
+        "Priority": 1,
+        "Filter": {
+           "Prefix": ""
+      },
+        "Destination": {
+           "Bucket": "arn:aws:s3:::bucketname",
+           "StorageClass": "STANDARD_IA"
+      },
+        "Status": "Enabled",
+        "ExistingObjectReplication": {
+            "Status": "Enabled"
+      },
+        "DeleteMarkerReplication": {"Status": "Enabled"}
+    }
+  ]
+}

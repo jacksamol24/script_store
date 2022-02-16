@@ -1,0 +1,39 @@
+pipeline {
+    agent { label 'agent-name' } 
+    stages {
+        stage('Git Clone') { 
+            steps {
+                dir('repository1') {
+                    git branch: 'master', credentialsId: 'd645-3268-4220-bdae', url: '<repo_name>'
+                }
+            }
+        }
+        stage('Start Build') { 
+            steps {
+                sh '''
+                    chmod +x assume_role.sh
+                    ./assume_role.sh
+                    source ./tmp_credential_file
+					
+                    echo "Docker Login: Check connection with AWS ECR - docker login"
+                    dockerlogin=$(aws ecr get-login --region us-east-1 --registry-ids <aws-account-id> --no-include-email)
+                    $dockerlogin
+                    echo "Docker Login: Done"
+
+                    echo "Build: Starting Docker Image Build"
+					cd <dockerfile-folder>
+                    docker build -t docker_image_name ./
+                    docker tag docker_image_name:latest <aws-account-id>.dkr.ecr.us-east-1.amazonaws.com/<docker_image_name>:latest
+                    echo "Docker Build: Done"
+					
+                    echo "Deploy: Starting image deployment on AWS ECR"
+                    docker push <aws-account-id>.dkr.ecr.us-east-1.amazonaws.com/<docker_image_name>:latest
+                    echo "Deploy: Done"
+
+                    echo "Job Execution Successful"
+
+                '''
+            }
+        }
+    }
+}

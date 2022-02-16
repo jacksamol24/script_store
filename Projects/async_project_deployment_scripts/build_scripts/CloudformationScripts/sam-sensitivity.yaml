@@ -1,0 +1,387 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  sense
+
+  Sample SAM Template for sense
+  
+Parameters:
+  SubnetIDs:
+    #Type: "CommaDelimitedList"
+    Type: "List<AWS::EC2::Subnet::Id>"
+    Description: List of VPC subnets
+  SecurityGroupIDs:
+    #Type: "CommaDelimitedList"
+    Type: "List<AWS::EC2::SecurityGroup::Id>"
+    Description: List of SecurityGroups
+  DbDatabaseName: 
+    Type: String
+  DbHost:
+    Type: String
+  DbPass:
+    Type: String
+  DbPort:
+    Type: String
+  DbUserName:
+    Type: String
+  Env:
+    Type: String
+  InputBucket:
+    Type: String
+  InsightDomain:
+    Type: String
+  AwsRegion:
+    Type: String
+
+# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
+Globals:
+  Function:
+    Timeout: 900
+
+Resources:
+  projectNameservice:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      MemorySize: 1024
+      CodeUri: projectName-service/
+      Handler: main.lambda_handler
+      Runtime: python3.7
+      VpcConfig:
+        SubnetIds: !Ref SubnetIDs
+        SecurityGroupIds: !Ref SecurityGroupIDs
+      Layers:
+        - !Ref botoLayer
+        - !Ref pandasLayer
+        - !Ref MultiPackage1Layer
+      Policies:
+        - AmazonSQSFullAccess
+        - Statement:
+            - Sid: EC2NetworkInstanceAccessPolicy
+              Effect: Allow
+              Action:
+                - ec2:DescribeNetworkInterfaces
+                - ec2:CreateNetworkInterface
+                - ec2:DeleteNetworkInterface
+                - ec2:DescribeInstances
+                - ec2:AttachNetworkInterface
+              Resource: '*'
+      Environment:
+        Variables:
+          DB_DATABASE_NAME: !Ref DbDatabaseName
+          DB_HOST: !Ref DbHost
+          DB_PASS: !Ref DbPass
+          DB_PORT: !Ref DbPort
+          SERVICE_QUEUE_NAME: 
+                Fn::GetAtt: 
+                - "projectNamePollingQueueSAM"
+                - "QueueName"
+
+  projectNamePollingService:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      MemorySize: 512
+      CodeUri: projectName-polling-service/
+      Handler: main.lambda_handler
+      Runtime: python3.7
+      VpcConfig:
+        SubnetIds: !Ref SubnetIDs
+        SecurityGroupIds: !Ref SecurityGroupIDs
+      Layers:
+        - !Ref MultiPackage1Layer
+        - !Ref projectNamePandas124layer
+      Policies:
+        - AmazonSQSFullAccess
+        - AmazonSESFullAccess
+      Environment:
+        Variables:
+          DB_DATABASE_NAME: !Ref DbDatabaseName
+          DB_HOST: !Ref DbHost
+          DB_PASS: !Ref DbPass
+          DB_PORT: !Ref DbPort
+          QUEUE_NAME: 
+            Fn::GetAtt: 
+                - "projectNamePollingQueueSAM"
+                - "QueueName"
+      #Events:
+      #  GetAPI:
+      #    Type: Api # More info about API Event Source: #https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#api
+      #    Properties:
+      #      Path: /us1
+      #      Method: get
+
+  projectNameJobPublisher:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      MemorySize: 512
+      CodeUri: projectName-job-publisher/
+      Handler: main.lambda_handler
+      Runtime: python3.7
+      VpcConfig:
+        SubnetIds: !Ref SubnetIDs
+        SecurityGroupIds: !Ref SecurityGroupIDs
+      Layers:
+        - !Ref botoLayer
+      Policies:
+        - AmazonSQSFullAccess
+        - Statement:
+            - Sid: EC2NetworkInstanceAccessPolicy
+              Effect: Allow
+              Action:
+                - ec2:DescribeNetworkInterfaces
+                - ec2:CreateNetworkInterface
+                - ec2:DeleteNetworkInterface
+                - ec2:DescribeInstances
+                - ec2:AttachNetworkInterface
+              Resource: '*'
+      Environment:
+        Variables:
+          AWS_REGION_: us-east-1
+      #Events:
+      #  GetAPI:
+      #    Type: Api # More info about API Event Source: #https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#api
+      #    Properties:
+      #      Path: /us
+      #      Method: post
+      
+      
+  restApiGateway:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Description: Example API Gateway
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+      Name: projectName-ApiGateway
+  
+  apiGatewayRootPostMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: POST
+      Integration:
+        IntegrationResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+            method.response.header.Access-Control-Allow-Methods: "'GET,POST,OPTIONS'"
+            method.response.header.Access-Control-Allow-Origin: "'*'"
+          ResponseTemplates:
+            application/json: ''
+        PassthroughBehavior: WHEN_NO_MATCH
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationHttpMethod: POST
+        Type: AWS_PROXY
+        Uri: !Sub
+          - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${lambdaArn}/invocations
+          - lambdaArn: !GetAtt projectNameJobPublisher.Arn
+      ResourceId: !GetAtt restApiGateway.RootResourceId
+      RestApiId: !Ref restApiGateway
+      MethodResponses:
+      - StatusCode: 200
+        ResponseModels:
+          application/json: 'Empty'
+        ResponseParameters:
+          method.response.header.Access-Control-Allow-Headers: true
+          method.response.header.Access-Control-Allow-Methods: true
+          method.response.header.Access-Control-Allow-Origin: true
+          
+  apiGatewayRootGetMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: GET
+      Integration:
+        IntegrationResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+            method.response.header.Access-Control-Allow-Methods: "'GET,POST,OPTIONS'"
+            method.response.header.Access-Control-Allow-Origin: "'*'"
+          ResponseTemplates:
+            application/json: ''
+        PassthroughBehavior: WHEN_NO_MATCH
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationHttpMethod: POST
+        Type: AWS_PROXY
+        Uri: !Sub
+          - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${lambdaArn}/invocations
+          - lambdaArn: !GetAtt projectNameStatusPollingService.Arn
+      ResourceId: !GetAtt restApiGateway.RootResourceId
+      RestApiId: !Ref restApiGateway
+      MethodResponses:
+      - StatusCode: 200
+        ResponseModels:
+          application/json: 'Empty'
+        ResponseParameters:
+          method.response.header.Access-Control-Allow-Headers: false
+          method.response.header.Access-Control-Allow-Methods: false
+          method.response.header.Access-Control-Allow-Origin: false
+      
+  OptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      RestApiId: !Ref restApiGateway
+      ResourceId: !GetAtt restApiGateway.RootResourceId
+      HttpMethod: OPTIONS
+      Integration:
+        IntegrationResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+            method.response.header.Access-Control-Allow-Methods: "'GET,POST,OPTIONS'"
+            method.response.header.Access-Control-Allow-Origin: "'*'"
+          ResponseTemplates:
+            application/json: ''
+        PassthroughBehavior: WHEN_NO_MATCH
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        Type: MOCK
+      MethodResponses:
+      - StatusCode: 200
+        ResponseModels:
+          application/json: 'Empty'
+        ResponseParameters:
+          method.response.header.Access-Control-Allow-Headers: false
+          method.response.header.Access-Control-Allow-Methods: false
+          method.response.header.Access-Control-Allow-Origin: false
+  
+  apiGatewayDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - apiGatewayRootPostMethod
+    Properties:
+      RestApiId: !Ref restApiGateway
+      StageName: !Ref apiGatewayStageName
+      
+  lambdaApiGatewayInvokeJobPublisher:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt projectNameJobPublisher.Arn
+      Principal: apigateway.amazonaws.com
+      # note: if route *not* at API Gateway root, `SourceArn` would take the form of:
+      #               arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${apiGateway}/${apiGatewayStageName}/${apiGatewayHTTPMethod}/PATH_PART
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${restApiGateway}/${apiGatewayStageName}/POST/
+  lambdaApiGatewayInvokeStatusPollingService:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt projectNameStatusPollingService.Arn
+      Principal: apigateway.amazonaws.com
+      # note: if route *not* at API Gateway root, `SourceArn` would take the form of:
+      #               arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${apiGateway}/${apiGatewayStageName}/${apiGatewayHTTPMethod}/PATH_PART
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${restApiGateway}/${apiGatewayStageName}/GET/                                
+            
+  projectNameStatusPollingService:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      MemorySize: 1024
+      CodeUri: projectName-status-polling-service/
+      Handler: main.lambda_handler
+      Runtime: python3.7
+      VpcConfig:
+        SubnetIds: !Ref SubnetIDs
+        SecurityGroupIds: !Ref SecurityGroupIDs
+      Layers:
+        - !Ref botoLayer
+        - !Ref MultiPackage1Layer
+      Policies:
+        - Statement:
+            - Sid: EC2NetworkInstanceAccessPolicy
+              Effect: Allow
+              Action:
+                - ec2:DescribeNetworkInterfaces
+                - ec2:CreateNetworkInterface
+                - ec2:DeleteNetworkInterface
+                - ec2:DescribeInstances
+                - ec2:AttachNetworkInterface
+              Resource: '*'
+      Environment:
+        Variables:
+          DB_DATABASE_NAME: !Ref DbDatabaseName
+          DB_HOST: !Ref DbHost
+          DB_PASS: !Ref DbPass
+          DB_PORT: !Ref DbPort
+          DB_USER_NAME: !Ref DbUserName
+          ENV: !Ref Env
+          INPUT_BUCKET: !Ref InputBucket
+          INSIGHT_DOMAIN: !Ref InsightDomain
+          INSIGHT_GET_DOMINO_INFO_API: !Ref InsightGetDominoInfoApi
+          LOGGING_LEVEL_NUMBER: !Ref LoggingLevelNumber
+          SHOW_PROGRESS_URL: !Ref ShowProgressUrl
+          TEMP_LOCATION: !Ref TempLocation
+          IR_RELEASE_VERSION: !Ref IrReleaseVersion
+          OUTPUT_FOLDER_NAME: projectName/outputs
+      #Events:
+      #  GetAPI:
+      #    Type: Api # More info about API Event Source: #https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#api
+      #    Properties:
+      #      Path: /us2
+      #      Method: get
+            
+  projectNamePollingQueueSAM:
+    Type: AWS::SQS::Queue
+    Properties:
+      DelaySeconds: 120
+      VisibilityTimeout: 900
+      RedrivePolicy: 
+        deadLetterTargetArn: 
+          Fn::GetAtt: 
+            - "projectNamePollingQueueDLQSAM"
+            - "Arn"
+        maxReceiveCount: 2
+  projectNamePollingQueueDLQSAM:
+    Type: AWS::SQS::Queue
+
+
+  projectNameJobsFifoQueueSAM:
+    Type: AWS::SQS::Queue
+    Properties:
+      VisibilityTimeout: 900
+      FifoQueue: true
+      ContentBasedDeduplication: true
+      RedrivePolicy: 
+        deadLetterTargetArn: 
+          Fn::GetAtt: 
+            - "projectNameJobsFifoQueueDLQSAM"
+            - "Arn"
+        maxReceiveCount: 2
+  projectNameJobsFifoQueueDLQSAM:
+    Type: AWS::SQS::Queue
+    Properties: 
+      FifoQueue: true
+      
+  EventSourceMapJobsQueueToProcess:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      Enabled: true
+      EventSourceArn: !GetAtt projectNameJobsFifoQueueSAM.Arn
+      FunctionName: !GetAtt projectNameservice.Arn
+      
+  EventSourceMapPollingQueueToPollingLambda:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      Enabled: true
+      EventSourceArn: !GetAtt projectNamePollingQueueSAM.Arn
+      FunctionName: !GetAtt projectNamePollingService.Arn
+
+Outputs:
+  # ServerlessRestApi is an implicit API created out of Events key under Serverless::Function
+  # Find out more about other implicit resources you can reference within SAM
+  # https://github.com/awslabs/serverless-application-model/blob/master/docs/internals/generated_resources.rst#api
+  #HelloWorldApi:
+  #  Description: "API Gateway endpoint URL for Prod stage for function"
+  #  Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/hello/"
+  projectNameservice:
+    Description: "projectName Lambda Function ARN"
+    Value: !GetAtt projectNameservice.Arn
+  projectNamePollingService:
+    Description: "projectName polling service Lambda Function ARN"
+    Value: !GetAtt projectNamePollingService.Arn
+  SourceQueueURL: 
+    Description: "URL of source queue"
+    Value: 
+      Ref: "projectNamePollingQueueSAM"

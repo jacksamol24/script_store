@@ -1,0 +1,5 @@
+-i https://pypi.org/simple
+--extra-index-url https://<internal-domain-nexus>/repository/pypi-hosted/simple
+boto3==1.11.9
+botocore==1.14.17
+victorops-decorator==1.0.1

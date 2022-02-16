@@ -1,0 +1,10 @@
+{
+   "ftp.domain1.com":[
+      22
+   ],
+   "ftp.domain2.com":[
+      990,
+      20,
+      21
+   ]
+}

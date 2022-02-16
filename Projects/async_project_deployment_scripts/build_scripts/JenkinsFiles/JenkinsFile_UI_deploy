@@ -1,0 +1,89 @@
+pipeline {
+    agent { label 'node-name' }
+
+    parameters {
+        choice(name: 'Env_to_update_to', 
+               choices: ['Non-Prod',
+                         'Prod',
+                         'dev'],
+               description: 'Please select the environment where the code needs to be deployed.')
+        text(name: 'Branch_name', defaultValue: 'qa', description: 'Branch name of UI code repository.')
+    }
+
+    stages {
+        stage('Git clone') {
+            steps {
+                dir('projectName_deployment_scripts') {
+                    git branch: 'master', credentialsId: '8-3268-4220-bdae-1', url: '<repo-url>'
+                }
+                dir('projectName-front-end') {
+                    git branch: "${params.Branch_name}", credentialsId: '8-3268-4220-bdae-1', url: '<repo-url>'
+                }
+            }
+        }
+        stage('Push to dev S3') {
+            when {
+                expression { "${params.Env_to_update_to}" == "dev" }
+            }
+            steps {
+                sh '''
+                    env_name=${Env_to_update_to}
+                    cp projectName_deployment_scripts/build_scripts/properties/$env_name/config.js projectName-front-end/config.js
+                    mv projectName_deployment_scripts/build_scripts/assume-role-nonprod.sh .
+                    echo "Break"
+                    chmod +x assume-role-nonprod.sh
+                    ./assume-role-nonprod.sh
+                    source ./tmp_credential_file
+                    
+                    cd projectName-front-end
+                    aws s3 sync . s3://projectName-fe-dev --exclude ".git/*" --acl bucket-owner-read --delete
+                    aws cloudfront create-invalidation --distribution-id E1TLEFO --paths "/*"
+                '''
+            }
+        }
+        stage('Push to Non-Prod S3') {
+            when {
+                expression { "${params.Env_to_update_to}" == "Non-Prod" }
+            }
+            steps {
+                sh '''
+                    env_name=${Env_to_update_to}
+                    cp projectName_deployment_scripts/build_scripts/properties/$env_name/config.js projectName-front-end/config.js
+                    # Commented config pick up from code repository as its picked up from deployment script repo
+                    #cp projectName-front-end/config/$env_name/config.js projectName-front-end/config.js
+                    mv projectName_deployment_scripts/build_scripts/assume-role-nonprod.sh .
+                    echo "Break"
+                    chmod +x assume-role-nonprod.sh
+                    ./assume-role-nonprod.sh
+                    source ./tmp_credential_file
+
+                    cd projectName-front-end
+                    aws s3 sync . s3://projectName-fe-stage --exclude ".git/*" --acl bucket-owner-read --delete
+                    aws cloudfront create-invalidation --distribution-id E1F9XX --paths "/*"
+                '''
+            }
+        }
+        stage('Push to Prod S3') {
+            when {
+                expression { "${params.Env_to_update_to}" == "Prod" }
+            }
+            steps {
+                sh '''
+                    env_name=${Env_to_update_to}
+                    cp projectName_deployment_scripts/build_scripts/properties/$env_name/config.js projectName-front-end/config.js
+                    # Commented config pick up from code repository as its picked up from deployment script repo
+                    #cp projectName-front-end/config/$env_name/config.js projectName-front-end/config.js
+                    mv projectName_deployment_scripts/build_scripts/assume-role-prod.sh .
+                    echo "Break"
+                    chmod +x assume-role-prod.sh
+                    ./assume-role-prod.sh
+                    source ./tmp_credential_file
+                    
+                    cd projectName-front-end
+                    aws s3 sync . s3://projectName-front-end --exclude ".git/*" --acl bucket-owner-read --delete
+                    aws cloudfront create-invalidation --distribution-id EMWUKQ --paths "/*"
+                '''
+            }
+        }
+    }
+}

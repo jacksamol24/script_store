@@ -1,0 +1,137 @@
+Parameters:
+  VarState: 
+    Type: String
+    Default: ENABLED
+  VarServiceRole: 
+    Type: String
+    Default: arn:aws:iam::<aws-account-id>:role/service-role/AWSBatchServiceRole
+  ## Create AMI to get Size
+  VarComputeEnvironmentNamePrifix: 
+    Type: String
+    Default: Linux
+  VarSubnetIDs:
+    #Type: "CommaDelimitedList"
+    Type: "List<AWS::EC2::Subnet::Id>"
+    Description: List of VPC subnets
+    Default: subnet-a718,subnet-6f7e3,subnet-ecdd5
+  VarM4MaxvCpus: 
+    Type: String
+    Default: 16
+  VarM4MinvCpus: 
+    Type: String
+    Default: 0
+  VarM4DesiredvCpus: 
+    Type: String
+    Default: 0
+  VarC5MaxvCpus: 
+    Type: String
+    Default: 16
+  VarC5MinvCpus: 
+    Type: String
+    Default: 0
+  VarC5DesiredvCpus: 
+    Type: String
+    Default: 0
+  # mcr-devops-send-email needs to be configured in Oregon
+  VarSecurityGroupIDs:
+    #Type: "CommaDelimitedList"
+    Type: "List<AWS::EC2::SecurityGroup::Id>"
+    Description: List of SecurityGroups
+    Default: sg-eaa,sg-89a1,sg-e7a
+  ## Create Image
+  VarImageId: 
+    Type: String
+    Default: ami-00244
+  VarInstanceRole: 
+    Type: String
+    Default: arn:aws:iam::<aws-account-id>:instance-profile/ecsInstanceRole
+  VarM4InstanceTypes:
+    Type: "CommaDelimitedList"
+    Description: List of VPC subnets
+    Default: m4.large,m4.xlarge,m4.2xlarge
+  VarC5InstanceTypes:
+    Type: "CommaDelimitedList"
+    Description: List of VPC subnets
+    Default: c5.large,c5.xlarge,c5.2xlarge
+  # Create/check key pair
+  VarEc2KeyPair: 
+    Type: String
+    Default: key.pem
+  VarTagName: 
+    Type: String
+    Default: AWS_Batch_Managed_Servers
+
+Resources:
+  ComputeEnvironmentM4:
+    Type: AWS::Batch::ComputeEnvironment
+    Properties:
+      Type: MANAGED
+      ServiceRole: !Ref VarServiceRole
+      ComputeEnvironmentName: !Sub "${VarComputeEnvironmentNamePrifix}_M4_OnDemand"
+      ComputeResources:
+        MaxvCpus: !Ref  VarM4MaxvCpus
+        SecurityGroupIds: !Ref VarSecurityGroupIDs
+        Type: EC2
+        Subnets: !Ref VarSubnetIDs
+        MinvCpus: !Ref VarM4MinvCpus
+        DesiredvCpus: !Ref VarM4DesiredvCpus
+        ImageId: !Ref  VarImageId
+        InstanceRole: !Ref VarInstanceRole
+        InstanceTypes: !Ref VarM4InstanceTypes
+        Ec2KeyPair: !Ref VarEc2KeyPair
+        Tags: 
+          Input:
+            !Sub |
+              {
+                Name: "${VarTagName}"
+                InstanceType: "M4"
+              }
+      State: !Ref VarState
+      
+  ComputeEnvironmentC5:
+    Type: AWS::Batch::ComputeEnvironment
+    Properties:
+      Type: MANAGED
+      ServiceRole: !Ref VarServiceRole
+      ComputeEnvironmentName: !Sub "${VarComputeEnvironmentNamePrifix}_C5_OnDemand"
+      ComputeResources:
+        MaxvCpus: !Ref  VarC5MaxvCpus
+        SecurityGroupIds: !Ref VarSecurityGroupIDs
+        Type: EC2
+        Subnets: !Ref VarSubnetIDs
+        MinvCpus: !Ref VarC5MinvCpus
+        DesiredvCpus: !Ref VarC5DesiredvCpus
+        ImageId: !Ref  VarImageId
+        InstanceRole: !Ref VarInstanceRole
+        InstanceTypes: !Ref VarC5InstanceTypes
+        Ec2KeyPair: !Ref VarEc2KeyPair
+        Tags: 
+          Input:
+            !Sub |
+              {
+                Name: "${VarTagName}"
+                InstanceType: "C5"
+              }
+
+      State: !Ref VarState
+      
+  BatchProcessingJobQueueM4:
+    Type: AWS::Batch::JobQueue
+    Properties:
+      JobQueueName: !Sub "${VarComputeEnvironmentNamePrifix}_M4_Queue"
+      State: ENABLED
+      Priority: 1
+      ComputeEnvironmentOrder:
+      - Order: 1
+        ComputeEnvironment:
+          Ref: ComputeEnvironmentM4
+  BatchProcessingJobQueueC5:
+    Type: AWS::Batch::JobQueue
+    Properties:
+      JobQueueName: !Sub "${VarComputeEnvironmentNamePrifix}_C5_Queue"
+      State: ENABLED
+      Priority: 1
+      ComputeEnvironmentOrder:
+      - Order: 1
+        ComputeEnvironment:
+          Ref: ComputeEnvironmentC5

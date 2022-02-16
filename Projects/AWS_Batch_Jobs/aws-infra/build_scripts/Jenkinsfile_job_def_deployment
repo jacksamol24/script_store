@@ -1,0 +1,65 @@
+pipeline {
+    agent { label 'awsjenkwin' } 
+    parameters {
+        choice(name: 'job_definitions_name', 
+               choices: ['Job_definition_name_JobDef',
+                         'Job_definition_name1_JobDef',
+                         ], 
+               description: 'Please select the job-definition which needs to be deployed.')
+        choice(name: 'Env_to_update_to', 
+               choices: ['Prod',
+                         'Non-Prod'],
+               description: 'Please select the environment where the code needs to be deployed.')
+        choice(name: 'AWS_Region', 
+               choices: ['us-east-1',
+                         'us-west-2'],
+               description: 'Please select the aws region where the code needs to be deployed.')
+               
+    }
+    stages {
+        stage('Git Clone') { 
+            steps {
+				deleteDir()
+                dir('aws_infra') {
+                    git branch: 'master', credentialsId: '8d645-3268-4220-bdae-14', url: '<repo_url>'
+                }
+            }
+        }
+        stage('Start Build') {
+            steps {
+                powershell '''
+					if($Env:Env_to_update_to -eq "Non-Prod") {
+						$aws_connect=aws sts assume-role --role-arn "arn:aws:iam::<non_prod_aws_account_id>:role/<role-name>" --duration-seconds 3600 --role-session-name "jenkins_powershell" | ConvertFrom-Json
+					}elseif($Env:Env_to_update_to -eq "Prod") {
+						$aws_connect=aws sts assume-role --role-arn "arn:aws:iam::<prod_aws_account_id>:role/<role_name>" --duration-seconds 3600 --role-session-name "jenkins_powershell" | ConvertFrom-Json
+					}else {
+						Write-Host "Choose proper Environment Prod, Non-Prod etc.."
+					}
+                    
+                    $Env:AWS_ACCESS_KEY_ID=($aws_connect | Select -ExpandProperty "Credentials" | select -ExpandProperty "AccessKeyId" )
+                    $Env:AWS_SECRET_ACCESS_KEY=($aws_connect | Select -ExpandProperty "Credentials" | select -ExpandProperty "SecretAccessKey" )
+                    $Env:AWS_SESSION_TOKEN=($aws_connect | Select -ExpandProperty "Credentials" | select -ExpandProperty "SessionToken" )
+
+                    aws sts get-caller-identity
+                    
+                    cd aws_infra/aws_batch/cloudformation/job-definitions
+                    dir
+					
+                    cd $Env:job_definitions_name
+                    
+                    dir
+                    
+                    aws cloudformation package --template-file job-definition.yaml --output-template-file output-sam.yaml --s3-bucket <bucket-name>
+					
+					$stack_name=$Env:job_definitions_name -replace '[-]',"" -replace '[_]',""
+					
+					Write-Host $stack_name
+					
+					$Env:AWS_DEFAULT_REGION=$Env:AWS_Region
+
+                    aws cloudformation deploy --template-file output-sam.yaml --capabilities CAPABILITY_IAM --parameter-overrides $(cat ./required_properties.txt) --stack-name $stack_name
+                '''
+            }
+        }   
+    }
+}

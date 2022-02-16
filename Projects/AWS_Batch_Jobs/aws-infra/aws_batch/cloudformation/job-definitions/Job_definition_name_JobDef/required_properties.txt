@@ -1,0 +1,12 @@
+VarCLWatchState=ENABLED
+VarCLWatchRoleArn=arn:aws:iam::<aws-account-id>:role/service-role/AWS_Events_Invoke_Batch_Job_Queue
+VarCLWatchDescription=everyday_08.30_am_GMT
+VarJobQueue=arn:aws:batch:<aws-region>:<aws-account-id>:job-queue/<Queue-Name>
+VarJobDefinitionName=Job_definition_name_JobDef
+VarVCPU=2
+VarMEMORY=2048
+VarAttemptDurationSeconds=172800
+VarImage=<aws-account-id>.dkr.ecr.us-west-2.amazonaws.com/<docker_image_name>:latest
+VarCommandString=/entry_point.sh,<project_name>,<s3_bucket_and_folder_name>
+VarJobRoleArn=arn:aws:iam::<aws-account-id>:role/ecs_task_role
+VarEnvDatabaseName=database_name
